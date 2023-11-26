@@ -1,0 +1,25 @@
+{
+  "name": "blockin-sol-driver",
+  "version": "1.0.1",
+  "description": "",
+  "type": "module",
+  "main": "dist/SolDriver.js",
+  "scripts": {
+    "prepack": "npm run build",
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "build": "rm -rf dist && tsc --build"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "bitbadgesjs-proto": "^0.1.83",
+    "bitbadgesjs-utils": "^1.1.166",
+    "blockin": "^1.2.35",
+    "bs58": "^5.0.0",
+    "buffer": "^6.0.3",
+    "tweetnacl": "^1.0.3"
+  },
+  "devDependencies": {
+    "typescript": "^4.7.3"
+  }
+}

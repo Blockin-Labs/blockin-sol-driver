@@ -1,6 +1,6 @@
 {
   "name": "blockin-sol-driver",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "",
   "type": "module",
   "main": "dist/SolDriver.js",
@@ -14,7 +14,7 @@
   "dependencies": {
     "bitbadgesjs-proto": "^0.1.83",
     "bitbadgesjs-utils": "^1.1.166",
-    "blockin": "^1.2.35",
+    "blockin": "^1.2.65",
     "bs58": "^5.0.0",
     "buffer": "^6.0.3",
     "tweetnacl": "^1.0.3"

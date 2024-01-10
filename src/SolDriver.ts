@@ -62,18 +62,18 @@ export default class SolDriver implements IChainDriver<bigint> {
 
   async verifyAssets(address: string, resources: string[], _assets: Asset<bigint>[], balancesSnapshot?: object): Promise<any> {
 
-    let ethAssets: Asset<bigint>[] = []
+    let solAssets: Asset<bigint>[] = []
     let bitbadgesAssets: Asset<bigint>[] = []
     if (resources) {
 
     }
 
     if (_assets) {
-      ethAssets = _assets.filter((elem) => elem.chain === "Ethereum")
+      solAssets = _assets.filter((elem) => elem.chain === "Solana")
       bitbadgesAssets = _assets.filter((elem) => elem.chain === "BitBadges")
     }
 
-    if (ethAssets.length === 0 && bitbadgesAssets.length === 0) return //No assets to verify
+    if (solAssets.length === 0 && bitbadgesAssets.length === 0) return //No assets to verify
 
     if (bitbadgesAssets.length > 0) {
       for (const asset of bitbadgesAssets) {
@@ -134,30 +134,50 @@ export default class SolDriver implements IChainDriver<bigint> {
         )
 
         const mustOwnAmount = asset.mustOwnAmounts
+        const mustSatisfyAll = asset.mustSatisfyForAllAssets;
+        let satisfiedForOne = false;
         for (const balance of balances) {
-          if (balance.amount < mustOwnAmount.start) {
-            throw new Error(
-              `Address ${address} does not own enough of IDs ${balance.badgeIds
-                .map((x) => `${x.start}-${x.end}`)
-                .join(",")} from collection ${asset.collectionId
-              } to meet minimum balance requirement of ${mustOwnAmount.start}`,
-            )
+          if (balance.amount < BigInt(mustOwnAmount.start)) {
+            if (mustSatisfyAll) {
+              throw new Error(
+                `Address ${address} does not own enough of IDs ${balance.badgeIds
+                  .map((x) => `${x.start}-${x.end}`)
+                  .join(",")} from collection ${asset.collectionId
+                } to meet minimum balance requirement of ${mustOwnAmount.start}`,
+              )
+            } else {
+              continue
+            }
           }
 
-          if (balance.amount > mustOwnAmount.end) {
-            throw new Error(
-              `Address ${address} owns too much of IDs ${balance.badgeIds
-                .map((x) => `${x.start}-${x.end}`)
-                .join(",")} from collection ${asset.collectionId
-              } to meet maximum balance requirement of ${mustOwnAmount.end}`,
-            )
+          if (balance.amount > BigInt(mustOwnAmount.end)) {
+            if (mustSatisfyAll) {
+              throw new Error(
+                `Address ${address} owns too much of IDs ${balance.badgeIds
+                  .map((x) => `${x.start}-${x.end}`)
+                  .join(",")} from collection ${asset.collectionId
+                } to meet maximum balance requirement of ${mustOwnAmount.end}`,
+              )
+            } else {
+              continue
+            }
           }
+
+          satisfiedForOne = true;
+        }
+
+        if (mustSatisfyAll) {
+          //we made it through all balances and didn't throw an error so we are good
+        } else if (!satisfiedForOne) {
+          throw new Error(
+            `Address ${address} did not meet the ownership requirements for any of the assets.`,
+          )
         }
       }
     }
 
-    if (ethAssets.length > 0) {
-      throw new Error(`Ethereum assets are not yet supported`)
+    if (solAssets.length > 0) {
+      throw new Error(`Solana assets are not yet supported`)
     }
   }
 }

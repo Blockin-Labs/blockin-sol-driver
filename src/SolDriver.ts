@@ -1,7 +1,7 @@
-import { Balance, BigIntify, UintRange, convertBalance, convertUintRange } from "bitbadgesjs-proto"
+import { Balance, BigIntify, NumberType, UintRange, convertBalance, convertUintRange } from "bitbadgesjs-proto"
 import { GetBadgeBalanceByAddressRoute, GetBadgeBalanceByAddressRouteSuccessResponse, OffChainBalancesMap, convertToCosmosAddress, getBalancesForIds } from "bitbadgesjs-utils"
 import { IChainDriver, constructChallengeObjectFromString } from "blockin"
-import { Asset } from "blockin/dist/types/verify.types"
+import { AndGroup, AssetConditionGroup, OrGroup, OwnershipRequirements, convertAssetConditionGroup } from "blockin/dist/types/verify.types"
 import bs58 from "bs58"
 import nacl from "tweetnacl"
 
@@ -60,124 +60,162 @@ export default class SolDriver implements IChainDriver<bigint> {
   }
 
 
-  async verifyAssets(address: string, resources: string[], _assets: Asset<bigint>[], balancesSnapshot?: object): Promise<any> {
+  async verifyAssets(address: string, resources: string[], _assets: AssetConditionGroup<NumberType> | undefined, balancesSnapshot?: object): Promise<any> {
+    const andItem: AndGroup<bigint> = _assets as AndGroup<bigint>
+    const orItem: OrGroup<bigint> = _assets as OrGroup<bigint>
+    const normalItem: OwnershipRequirements<bigint> = _assets as OwnershipRequirements<bigint>
 
-    let solAssets: Asset<bigint>[] = []
-    let bitbadgesAssets: Asset<bigint>[] = []
-    if (resources) {
+    if (andItem.$and) {
+      for (const item of andItem.$and) {
+        await this.verifyAssets(address, resources, item, balancesSnapshot)
+      }
+    } else if (orItem.$or) {
+      for (const item of orItem.$or) {
+        try {
+          await this.verifyAssets(address, resources, item, balancesSnapshot)
+          return  //if we get here, we are good (short circuit)
+        } catch (e) {
+          continue
+        }
+      }
 
-    }
+      throw new Error(`Did not meet the requirements for any of the assets in the group`)
+    } else {
+      const numToSatisfy = normalItem.options?.numMatchesForVerification ?? 0;
+      const mustSatisfyAll = !numToSatisfy;
 
-    if (_assets) {
-      solAssets = _assets.filter((elem) => elem.chain === "Solana")
-      bitbadgesAssets = _assets.filter((elem) => elem.chain === "BitBadges")
-    }
+      let numSatisfied = 0;
+      for (const asset of normalItem.assets) {
 
-    if (solAssets.length === 0 && bitbadgesAssets.length === 0) return //No assets to verify
 
-    if (bitbadgesAssets.length > 0) {
-      for (const asset of bitbadgesAssets) {
         let docBalances: Balance<bigint>[] = []
-        if (!balancesSnapshot) {
-          const balancesRes: GetBadgeBalanceByAddressRouteSuccessResponse<string> = await axios.post(
-            "https://api.bitbadges.io" +
-            GetBadgeBalanceByAddressRoute(asset.collectionId, convertToCosmosAddress(address),),
-            {},
-            {
-              headers: {
-                "Content-Type": "application/json",
-                "x-api-key": process.env.BITBADGES_API_KEY,
+        let balances: Balance<bigint>[] = [];
+
+        if (asset.chain === 'BitBadges') {
+          if (!balancesSnapshot) {
+            const balancesRes: GetBadgeBalanceByAddressRouteSuccessResponse<string> = await axios.post(
+              "https://api.bitbadges.io" +
+              GetBadgeBalanceByAddressRoute(asset.collectionId, convertToCosmosAddress(address),),
+              {},
+              {
+                headers: {
+                  "Content-Type": "application/json",
+                  "x-api-key": process.env.BITBADGES_API_KEY,
+                },
               },
-            },
-          ).then((res) => {
-            return res.data
-          })
+            ).then((res) => {
+              return res.data
+            })
 
-          docBalances = balancesRes.balance.balances.map((x) => convertBalance(x, BigIntify))
+            docBalances = balancesRes.balance.balances.map((x) => convertBalance(x, BigIntify))
+          } else {
+            const cosmosAddress = convertToCosmosAddress(address)
+            const balancesSnapshotObj = balancesSnapshot as OffChainBalancesMap<bigint>
+            docBalances = balancesSnapshotObj[cosmosAddress] ? balancesSnapshotObj[cosmosAddress].map(x => convertBalance(x, BigIntify)) : []
+          }
+
+
+          if (asset.collectionId === 'BitBadges Lists') {
+            throw new Error(`BitBadges Lists are not supported for now`)
+          } else {
+            if (
+              !asset.assetIds.every(
+                (x) => typeof x === "object" && BigInt(x.start) >= 0 && BigInt(x.end) >= 0,
+              )
+            ) {
+              throw new Error(`All assetIds must be UintRanges for BitBadges compatibility`)
+            }
+          }
+
+          if (
+            asset.ownershipTimes &&
+            !asset.ownershipTimes.every(
+              (x) => typeof x === "object" && BigInt(x.start) >= 0 && BigInt(x.end) >= 0,
+            )
+          ) {
+            throw new Error(`All ownershipTimes must be UintRanges for BitBadges compatibility`)
+          }
+
+          if (
+            asset.mustOwnAmounts && !(typeof asset.mustOwnAmounts === "object" && BigInt(asset.mustOwnAmounts.start) >= 0 && BigInt(asset.mustOwnAmounts.end) >= 0)
+          ) {
+            throw new Error(`mustOwnAmount must be UintRange for BitBadges compatibility`)
+          }
+
+          if (!asset.ownershipTimes || asset.ownershipTimes.length === 0) {
+            asset.ownershipTimes = [{ start: BigInt(Date.now()), end: BigInt(Date.now()) }]
+          }
+
+          balances = getBalancesForIds(
+            asset.assetIds.map((x) => convertUintRange(x as UintRange<bigint>, BigIntify)),
+            asset.ownershipTimes.map((x) => convertUintRange(x, BigIntify)),
+            docBalances,
+          )
+
         } else {
-          const cosmosAddress = convertToCosmosAddress(address)
-          const balancesSnapshotObj = balancesSnapshot as OffChainBalancesMap<bigint>
-          docBalances = balancesSnapshotObj[cosmosAddress] ? balancesSnapshotObj[cosmosAddress].map(x => convertBalance(x, BigIntify)) : []
-        }
+          //TODO: Add Solana asset verification
 
-        if (
-          !asset.assetIds.every(
-            (x) => typeof x === "object" && BigInt(x.start) >= 0 && BigInt(x.end) >= 0,
-          )
-        ) {
-          throw new Error(`All assetIds must be UintRanges for BitBadges compatibility`)
+          throw new Error(`Solana asset verification is not supported for now`)
         }
-
-        if (
-          asset.ownershipTimes &&
-          !asset.ownershipTimes.every(
-            (x) => typeof x === "object" && BigInt(x.start) >= 0 && BigInt(x.end) >= 0,
-          )
-        ) {
-          throw new Error(`All ownershipTimes must be UintRanges for BitBadges compatibility`)
-        }
-
-        if (
-          asset.mustOwnAmounts && !(typeof asset.mustOwnAmounts === "object" && BigInt(asset.mustOwnAmounts.start) >= 0 && BigInt(asset.mustOwnAmounts.end) >= 0)
-        ) {
-          throw new Error(`mustOwnAmount must be UintRange for BitBadges compatibility`)
-        }
-
-        if (!asset.ownershipTimes) {
-          asset.ownershipTimes = [{ start: BigInt(Date.now()), end: BigInt(Date.now()) }]
-        }
-
-        const balances = getBalancesForIds(
-          asset.assetIds.map((x) => convertUintRange(x as UintRange<bigint>, BigIntify)),
-          asset.ownershipTimes.map((x) => convertUintRange(x, BigIntify)),
-          docBalances,
-        )
 
         const mustOwnAmount = asset.mustOwnAmounts
-        const mustSatisfyAll = asset.mustSatisfyForAllAssets;
-        let satisfiedForOne = false;
+
         for (const balance of balances) {
-          if (balance.amount < BigInt(mustOwnAmount.start)) {
+          if (balance.amount < mustOwnAmount.start) {
             if (mustSatisfyAll) {
-              throw new Error(
-                `Address ${address} does not own enough of IDs ${balance.badgeIds
-                  .map((x) => `${x.start}-${x.end}`)
-                  .join(",")} from collection ${asset.collectionId
-                } to meet minimum balance requirement of ${mustOwnAmount.start}`,
-              )
+              if (asset.collectionId === 'BitBadges Lists') {
+                const listIdIdx = balance.badgeIds[0].start - 1n;
+                const correspondingListId = asset.assetIds[Number(listIdIdx)]
+                throw new Error(
+                  `Address ${address} does not meet the requirements for list ${correspondingListId}`,
+                )
+              } else {
+                throw new Error(
+                  `Address ${address} does not own enough of IDs ${balance.badgeIds
+                    .map((x) => `${x.start}-${x.end}`)
+                    .join(",")} from collection ${asset.collectionId
+                  } to meet minimum balance requirement of ${mustOwnAmount.start}`,
+                )
+              }
             } else {
               continue
             }
           }
 
-          if (balance.amount > BigInt(mustOwnAmount.end)) {
+          if (balance.amount > mustOwnAmount.end) {
             if (mustSatisfyAll) {
-              throw new Error(
-                `Address ${address} owns too much of IDs ${balance.badgeIds
-                  .map((x) => `${x.start}-${x.end}`)
-                  .join(",")} from collection ${asset.collectionId
-                } to meet maximum balance requirement of ${mustOwnAmount.end}`,
-              )
+              if (asset.collectionId === 'BitBadges Lists') {
+                const listIdIdx = balance.badgeIds[0].start - 1n;
+                const correspondingListId = asset.assetIds[Number(listIdIdx)]
+                throw new Error(
+                  `Address ${address} does not meet requirements for list ${correspondingListId}`,
+                )
+              }
+              else {
+                throw new Error(
+                  `Address ${address} owns too much of IDs ${balance.badgeIds
+                    .map((x) => `${x.start}-${x.end}`)
+                    .join(",")} from collection ${asset.collectionId
+                  } to meet maximum balance requirement of ${mustOwnAmount.end}`,
+                )
+              }
             } else {
               continue
             }
           }
 
-          satisfiedForOne = true;
+          numSatisfied++;
         }
+      }
 
-        if (mustSatisfyAll) {
-          //we made it through all balances and didn't throw an error so we are good
-        } else if (!satisfiedForOne) {
-          throw new Error(
-            `Address ${address} did not meet the ownership requirements for any of the assets.`,
-          )
-        }
+      if (mustSatisfyAll) {
+        //we made it through all balances and didn't throw an error so we are good
+      } else if (numSatisfied < numToSatisfy) {
+        throw new Error(
+          `Address ${address} did not meet the ownership requirements for at least ${numToSatisfy} of the IDs. Met for ${numSatisfied} of the IDs.`,
+        )
       }
     }
 
-    if (solAssets.length > 0) {
-      throw new Error(`Solana assets are not yet supported`)
-    }
   }
 }

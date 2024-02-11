@@ -1,5 +1,5 @@
-import { Balance, BigIntify, NumberType, UintRange, convertBalance, convertUintRange } from "bitbadgesjs-proto"
-import { GetBadgeBalanceByAddressRoute, GetBadgeBalanceByAddressRouteSuccessResponse, OffChainBalancesMap, convertToCosmosAddress, getBalancesForIds } from "bitbadgesjs-utils"
+import { Balance, BigIntify, NumberType, UintRange, convertBalance, convertUintRange } from "bitbadgesjs-sdk"
+import { GetBadgeBalanceByAddressRoute, GetBadgeBalanceByAddressRouteSuccessResponse, OffChainBalancesMap, convertToCosmosAddress, getBalancesForIds } from "bitbadgesjs-sdk"
 import { IChainDriver, constructChallengeObjectFromString } from "blockin"
 import { AndGroup, AssetConditionGroup, OrGroup, OwnershipRequirements, convertAssetConditionGroup } from "blockin/dist/types/verify.types"
 import bs58 from "bs58"
@@ -61,6 +61,8 @@ export default class SolDriver implements IChainDriver<bigint> {
 
 
   async verifyAssets(address: string, resources: string[], _assets: AssetConditionGroup<NumberType> | undefined, balancesSnapshot?: object): Promise<any> {
+    if (!_assets) return //if no asset requirements, we do not need to verify anything
+
     const andItem: AndGroup<bigint> = _assets as AndGroup<bigint>
     const orItem: OrGroup<bigint> = _assets as OrGroup<bigint>
     const normalItem: OwnershipRequirements<bigint> = _assets as OwnershipRequirements<bigint>
